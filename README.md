@@ -1,10 +1,12 @@
 # FlowForge
 
 A desktop **workflow automation studio** written in Java 21 with a custom,
-fully themed Swing GUI. Build workflows from reusable steps (log a message,
-set a variable, compute a value, pause, write a file), then run them and watch
-live progress stream into a colour-coded run log. Workflows are saved to disk
-automatically and reloaded on startup.
+fully themed Swing GUI. Build workflows from reusable steps, then run them and
+watch live progress stream into a colour-coded run log. Inspired by tools like
+n8n, FlowForge goes beyond a linear script: it calls **HTTP** endpoints, parses
+**JSON** responses, branches with **IF / ELSE**, and repeats work with counted
+and conditional **loops**. Workflows are saved to disk automatically and
+reloaded on startup.
 
 This project is an Object-Oriented Programming study piece and deliberately
 showcases clean OOP design, a custom GUI, custom exceptions and thorough
@@ -12,8 +14,30 @@ JUnit 5 test coverage.
 
 ---
 
+## Step types
+
+| Step | What it does |
+|---|---|
+| **Log Message** | Print a message (supports `${variable}` placeholders) |
+| **Set Variable** | Store a value for later steps |
+| **Compute** | Arithmetic on two operands into a result variable |
+| **Delay** | Pause for a number of milliseconds |
+| **Write File** | Write text content to disk |
+| **HTTP Request** | Call a GET/POST/PUT/DELETE/PATCH endpoint; stores status + body |
+| **JSON Extract** | Parse JSON and pull a value out by path (`data.items.0.name`) |
+| **If / Else / End If** | Conditional branching |
+| **Loop / End Loop** | Repeat a block a fixed number of times or while a condition holds |
+
 ## Highlights
 
+- **n8n-style control flow** - IF/ELSE branching and counted/while loops, built
+  on the **Composite pattern**: the flat step list is compiled into a tree of
+  `FlowNode`s (`SequenceNode`, `IfNode`, `LoopNode`, `TaskNode`) that a
+  recursive interpreter walks. Marker steps keep storage and the GUI simple
+  while delivering real nested control flow.
+- **HTTP + JSON, dependency-free** - the HTTP step uses the JDK's `HttpClient`,
+  and JSON is handled by a hand-written recursive-descent parser
+  (`JsonParser`/`JsonPath`/`JsonWriter`) with no third-party library.
 - **Custom, themed GUI** - an undecorated window with a hand-painted title
   bar, custom-painted buttons, themed pop-up dialogs and five switchable
   themes (Light, Midnight, Synthwave, Forest, **Cyberpunk**). The Cyberpunk
@@ -25,10 +49,12 @@ JUnit 5 test coverage.
 - **SQLite persistence** - workflows are stored in a normalised SQLite
   database (via the xerial JDBC driver) behind a `WorkflowRepository`
   interface, so the storage technology is swappable.
-- **Rich custom exceptions** - a `WorkflowException` hierarchy so any layer's
-  failure can be caught generically or handled specifically.
-- **75 JUnit 5 tests** covering the model, service and persistence layers
-  (including the SQLite store and an in-memory repository double).
+- **Rich custom exceptions** - a `WorkflowException` hierarchy (now including
+  `JsonException`) so any layer's failure can be caught generically or handled
+  specifically.
+- **162 JUnit 5 tests** covering the model, service and persistence layers,
+  including the JSON engine, control-flow compiler/interpreter and a live
+  in-process HTTP server test for the HTTP step.
 - **Two front ends over one core** - a Swing GUI (default) and a text
   console (`--console`), proving the domain layer is UI-agnostic.
 
@@ -36,11 +62,12 @@ JUnit 5 test coverage.
 
 | Concept | Where |
 |---|---|
-| Abstraction | `Task` (abstract base), `WorkflowRepository` (interface) |
-| Encapsulation | `Workflow` (private step list, bounds-safe mutators), `Account`-style validated fields |
-| Inheritance | `LogTask`, `SetVariableTask`, `ComputeTask`, `DelayTask`, `WriteFileTask` extend `Task` |
-| Polymorphism | `WorkflowEngine` runs any `Task` via `execute(...)` without knowing its type |
+| Abstraction | `Task` (abstract base), `WorkflowRepository` (interface), `FlowNode` (composite component) |
+| Encapsulation | `Workflow` (private step list, bounds-safe mutators), `Condition` value object |
+| Inheritance | All step classes extend `Task`; `SequenceNode`/`IfNode`/`LoopNode`/`TaskNode` extend `FlowNode` |
+| Polymorphism | `WorkflowEngine` runs any `Task` via `execute(...)`; the interpreter walks any `FlowNode` |
 | Template method | `Task.run(...)` wraps every step's `execute(...)` in uniform error handling |
+| Composite pattern | Control flow is a tree of `FlowNode`s compiled from the flat list by `FlowParser` |
 | Factory | `TaskFactory` builds concrete tasks from persisted fields |
 | Programming to interfaces | service layer depends on `WorkflowRepository`, not the concrete SQLite/file class |
 
@@ -49,17 +76,19 @@ JUnit 5 test coverage.
 ```
 src/main/java/com/flowforge
 ├── Main.java                  Entry point (GUI by default, --console for text)
-├── exception/                 WorkflowException hierarchy
+├── exception/                 WorkflowException hierarchy (incl. JsonException)
 ├── model/                     Workflow, ExecutionContext, RunReport, StepResult
-│   └── task/                  Task base + 5 concrete steps + TaskType + TaskFactory
+│   ├── task/                  Task base + steps + Condition + TaskType + TaskFactory
+│   └── json/                  Dependency-free JSON parser, path resolver, writer
 ├── service/                   WorkflowManager, WorkflowEngine, listener
+│   └── flow/                  Composite control-flow tree + recursive interpreter
 ├── persistence/               WorkflowRepository + SQLite and file implementations
 ├── ui/                        ConsoleUI (text front end)
 └── gui/                       FlowTheme, FlowForgeApp, custom buttons/title bar/dialogs,
                                Cyberpunk fonts + neon button painting
 
 lib/                           sqlite-jdbc driver
-src/test/java/com/flowforge    JUnit 5 tests for model, service, persistence
+src/test/java/com/flowforge    JUnit 5 tests for model, json, service, flow, persistence
 tools/                         CLI build/test helpers (no Maven/Gradle required)
 ```
 

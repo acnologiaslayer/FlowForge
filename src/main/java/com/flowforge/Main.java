@@ -6,7 +6,14 @@ import com.flowforge.gui.FlowForgeApp;
 import com.flowforge.gui.FlowTheme;
 import com.flowforge.model.Workflow;
 import com.flowforge.model.task.ComputeTask;
+import com.flowforge.model.task.Condition;
+import com.flowforge.model.task.EndIfTask;
+import com.flowforge.model.task.EndLoopTask;
+import com.flowforge.model.task.HttpRequestTask;
+import com.flowforge.model.task.IfTask;
+import com.flowforge.model.task.JsonExtractTask;
 import com.flowforge.model.task.LogTask;
+import com.flowforge.model.task.LoopTask;
 import com.flowforge.model.task.SetVariableTask;
 import com.flowforge.model.task.WriteFileTask;
 import com.flowforge.persistence.FileWorkflowRepository;
@@ -107,8 +114,31 @@ public class Main {
                     "Report for ${user}\nMorning: ${morning}\nEvening: ${evening}\nTotal: ${total}",
                     false));
             manager.save(demo);
+
+            seedApiWorkflow(manager);
         } catch (WorkflowException e) {
             System.err.println("Could not seed example workflow: " + e.getMessage());
         }
+    }
+
+    /**
+     * A second sample that showcases the n8n-style capabilities: an HTTP
+     * request, JSON extraction, conditional branching and a loop.
+     */
+    private static void seedApiWorkflow(WorkflowManager manager) throws WorkflowException {
+        Workflow api = manager.createWorkflow("API Health Check",
+                "Calls a public API, inspects the JSON, branches on the result and loops.");
+        api.addStep(new HttpRequestTask("Fetch post", HttpRequestTask.Method.GET,
+                "https://jsonplaceholder.typicode.com/posts/1", "",
+                java.util.Map.of("Accept", "application/json"), "response"));
+        api.addStep(new JsonExtractTask("Read title", "${response_body}", "title", "title"));
+        api.addStep(new IfTask("Has title?",
+                new Condition("${title}", Condition.Comparator.IS_NOT_EMPTY, "")));
+        api.addStep(new LogTask("Log title", "Fetched title: ${title}"));
+        api.addStep(new EndIfTask("End check"));
+        api.addStep(LoopTask.count("Repeat", "3", "i"));
+        api.addStep(new LogTask("Loop log", "Pass number ${i}"));
+        api.addStep(new EndLoopTask("End repeat"));
+        manager.save(api);
     }
 }

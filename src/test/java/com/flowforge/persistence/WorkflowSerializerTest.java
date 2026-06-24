@@ -3,10 +3,21 @@ package com.flowforge.persistence;
 import com.flowforge.exception.InvalidTaskConfigurationException;
 import com.flowforge.model.Workflow;
 import com.flowforge.model.task.ComputeTask;
+import com.flowforge.model.task.Condition;
+import com.flowforge.model.task.ElseTask;
+import com.flowforge.model.task.EndIfTask;
+import com.flowforge.model.task.EndLoopTask;
+import com.flowforge.model.task.HttpRequestTask;
+import com.flowforge.model.task.IfTask;
+import com.flowforge.model.task.JsonExtractTask;
 import com.flowforge.model.task.LogTask;
+import com.flowforge.model.task.LoopTask;
 import com.flowforge.model.task.SetVariableTask;
+import com.flowforge.model.task.TaskType;
 import com.flowforge.model.task.WriteFileTask;
 import org.junit.jupiter.api.Test;
+
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -65,5 +76,38 @@ class WorkflowSerializerTest {
     void corruptDataWithoutIdThrows() {
         assertThrows(InvalidTaskConfigurationException.class,
                 () -> WorkflowSerializer.deserialize("workflow.name=NoId\n"));
+    }
+
+    @Test
+    void roundTripsControlFlowAndIntegrationTasks() throws Exception {
+        Workflow original = new Workflow("wf-cf", "Control flow", "");
+        original.addStep(new HttpRequestTask("Fetch", HttpRequestTask.Method.POST,
+                "https://api.example.com", "{\"q\":1}",
+                Map.of("Accept", "application/json"), "resp"));
+        original.addStep(new JsonExtractTask("Extract", "${resp_body}", "data.0.id", "id"));
+        original.addStep(new IfTask("If",
+                new Condition("${id}", Condition.Comparator.GREATER, "0")));
+        original.addStep(new LogTask("Then", "positive"));
+        original.addStep(new ElseTask("Else"));
+        original.addStep(new LogTask("Else body", "non-positive"));
+        original.addStep(new EndIfTask("End if"));
+        original.addStep(LoopTask.count("Loop", "3", "i"));
+        original.addStep(new LogTask("Body", "${i}"));
+        original.addStep(new EndLoopTask("End loop"));
+
+        Workflow restored = WorkflowSerializer.deserialize(
+                WorkflowSerializer.serialize(original));
+
+        assertEquals(10, restored.stepCount());
+        assertEquals(TaskType.HTTP_REQUEST, restored.getStep(0).getType());
+        HttpRequestTask http = (HttpRequestTask) restored.getStep(0);
+        assertEquals(HttpRequestTask.Method.POST, http.getMethod());
+        assertEquals("application/json", http.getHeaders().get("Accept"));
+        assertEquals("data.0.id", ((JsonExtractTask) restored.getStep(1)).getPath());
+        assertEquals(Condition.Comparator.GREATER,
+                ((IfTask) restored.getStep(2)).getCondition().getComparator());
+        assertEquals(TaskType.END_IF, restored.getStep(6).getType());
+        assertEquals(LoopTask.Mode.COUNT, ((LoopTask) restored.getStep(7)).getMode());
+        assertEquals(TaskType.END_LOOP, restored.getStep(9).getType());
     }
 }
