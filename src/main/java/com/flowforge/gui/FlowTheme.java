@@ -2,6 +2,7 @@ package com.flowforge.gui;
 
 import javax.swing.UIManager;
 import javax.swing.plaf.ColorUIResource;
+import javax.swing.plaf.FontUIResource;
 import java.awt.Color;
 import java.awt.Font;
 
@@ -35,7 +36,12 @@ public enum FlowTheme {
     FOREST("Forest", new Palette(
             new Color(0x0F1A14), new Color(0x16271D), new Color(0xE7F3EA),
             new Color(0x4ADE80), new Color(0x07120B), new Color(0x9BE15D), new Color(0xF0743A),
-            new Color(0x24402F)));
+            new Color(0x24402F))),
+
+    CYBERPUNK("Cyberpunk", new Palette(
+            new Color(0x0A0A18), new Color(0x1C0C30), new Color(0xE0F8FF),
+            new Color(0x00F0FF), new Color(0x08081A), new Color(0x6CFFB0), new Color(0xFF2A6D),
+            new Color(0x3A1E5E)));
 
     /**
      * The colour roles used across the UI.
@@ -74,14 +80,24 @@ public enum FlowTheme {
         return this != LIGHT;
     }
 
-    /** The display font for headings and the app title. */
+    /**
+     * The display font for headings and the app title. Cyberpunk uses the
+     * bundled Orbitron face; other themes keep the standard sans-serif.
+     */
     public Font headingFont(int style, float size) {
-        return new Font("SansSerif", style, (int) size);
+        return this == CYBERPUNK
+                ? CyberpunkFonts.display(style, size)
+                : new Font("SansSerif", style, (int) size);
     }
 
-    /** The font for body text and chrome. */
+    /**
+     * The font for body text and chrome. Cyberpunk uses the bundled Share
+     * Tech Mono HUD face; other themes keep the standard sans-serif.
+     */
     public Font bodyFont(int style, float size) {
-        return new Font("SansSerif", style, (int) size);
+        return this == CYBERPUNK
+                ? CyberpunkFonts.body(style, size)
+                : new Font("SansSerif", style, (int) size);
     }
 
     public static FlowTheme fromLabel(String label) {
@@ -144,6 +160,25 @@ public enum FlowTheme {
 
         UIManager.put("TextField.caretForeground", p.foreground());
         UIManager.put("TextArea.caretForeground", p.foreground());
+
+        if (this == CYBERPUNK) {
+            installCyberpunkFonts();
+        }
+    }
+
+    /** Applies the bundled cyberpunk fonts to the common Swing UI font keys. */
+    private static void installCyberpunkFonts() {
+        FontUIResource body = new FontUIResource(CyberpunkFonts.body(Font.PLAIN, 13f));
+        FontUIResource heading = new FontUIResource(CyberpunkFonts.display(Font.BOLD, 12f));
+        for (String key : new String[]{
+                "Label.font", "Button.font", "ToggleButton.font", "RadioButton.font",
+                "CheckBox.font", "TextField.font", "TextArea.font", "ComboBox.font",
+                "List.font", "Menu.font", "MenuItem.font", "PopupMenu.font",
+                "ToolTip.font", "OptionPane.font", "Panel.font", "Viewport.font",
+                "ScrollPane.font"}) {
+            UIManager.put(key, body);
+        }
+        UIManager.put("MenuBar.font", heading);
     }
 
     private static void put(String key, Color color) {

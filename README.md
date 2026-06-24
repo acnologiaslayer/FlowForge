@@ -15,14 +15,20 @@ JUnit 5 test coverage.
 ## Highlights
 
 - **Custom, themed GUI** - an undecorated window with a hand-painted title
-  bar, custom-painted buttons, themed pop-up dialogs and four switchable
-  themes (Light, Midnight, Synthwave, Forest).
+  bar, custom-painted buttons, themed pop-up dialogs and five switchable
+  themes (Light, Midnight, Synthwave, Forest, **Cyberpunk**). The Cyberpunk
+  theme adds angular neon buttons and bundled display fonts (Orbitron +
+  Share Tech Mono).
 - **Layered architecture** - `model` / `exception` / `service` /
   `persistence` / `ui` / `gui`, each with a single responsibility and
   depending only on abstractions.
+- **SQLite persistence** - workflows are stored in a normalised SQLite
+  database (via the xerial JDBC driver) behind a `WorkflowRepository`
+  interface, so the storage technology is swappable.
 - **Rich custom exceptions** - a `WorkflowException` hierarchy so any layer's
   failure can be caught generically or handled specifically.
-- **68 JUnit 5 tests** covering the model, service and persistence layers.
+- **75 JUnit 5 tests** covering the model, service and persistence layers
+  (including the SQLite store and an in-memory repository double).
 - **Two front ends over one core** - a Swing GUI (default) and a text
   console (`--console`), proving the domain layer is UI-agnostic.
 
@@ -36,7 +42,7 @@ JUnit 5 test coverage.
 | Polymorphism | `WorkflowEngine` runs any `Task` via `execute(...)` without knowing its type |
 | Template method | `Task.run(...)` wraps every step's `execute(...)` in uniform error handling |
 | Factory | `TaskFactory` builds concrete tasks from persisted fields |
-| Programming to interfaces | service layer depends on `WorkflowRepository`, not the file class |
+| Programming to interfaces | service layer depends on `WorkflowRepository`, not the concrete SQLite/file class |
 
 ## Project layout
 
@@ -47,10 +53,12 @@ src/main/java/com/flowforge
 ├── model/                     Workflow, ExecutionContext, RunReport, StepResult
 │   └── task/                  Task base + 5 concrete steps + TaskType + TaskFactory
 ├── service/                   WorkflowManager, WorkflowEngine, listener
-├── persistence/               WorkflowRepository, FileWorkflowRepository, serializer
+├── persistence/               WorkflowRepository + SQLite and file implementations
 ├── ui/                        ConsoleUI (text front end)
-└── gui/                       FlowTheme, FlowForgeApp, custom buttons/title bar/dialogs
+└── gui/                       FlowTheme, FlowForgeApp, custom buttons/title bar/dialogs,
+                               Cyberpunk fonts + neon button painting
 
+lib/                           sqlite-jdbc driver
 src/test/java/com/flowforge    JUnit 5 tests for model, service, persistence
 tools/                         CLI build/test helpers (no Maven/Gradle required)
 ```
@@ -58,19 +66,24 @@ tools/                         CLI build/test helpers (no Maven/Gradle required)
 ## Running
 
 ### From IntelliJ
-Open the folder (it has a `pom.xml` and `.iml`), then run `com.flowforge.Main`.
+Open the folder (it has a `pom.xml` and `.iml` with the SQLite library wired
+in), then run `com.flowforge.Main`.
 
 ### From the command line
 
 ```bash
-# Compile
-javac -d out/main $(find src/main/java -name '*.java')
+# Compile (SQLite driver on the classpath)
+javac -cp "lib/*" -d out/main $(find src/main/java -name '*.java')
+# Copy bundled fonts so the Cyberpunk theme can load them
+(cd src/main/java && find . -name '*.ttf' -o -name '*.txt' | \
+  while read f; do mkdir -p "../../../out/main/$(dirname "$f")"; \
+  cp "$f" "../../../out/main/$f"; done)
 
 # Launch the GUI
-java -cp out/main com.flowforge.Main
+java -cp "out/main:lib/*" com.flowforge.Main
 
 # Or the text console
-java -cp out/main com.flowforge.Main --console
+java -cp "out/main:lib/*" com.flowforge.Main --console
 ```
 
 ## Testing
@@ -86,17 +99,19 @@ bash tools/run-tests.sh
 It prints a summary and exits non-zero if any test fails. With Maven
 installed, `mvn test` works too.
 
-## Data format
+## Data storage
 
-Each workflow is stored as a human-readable `data/<id>.flow` text file, for
-example:
+Workflows are persisted in an SQLite database at `data/flowforge.db` using a
+normalised three-table schema:
 
 ```
-workflow.id=wf-0001
-workflow.name=Daily Report
-step.0.type=SET
-step.0.name=Set greeting
-step.0.field.variableName=user
-step.0.field.value=Mahir
-...
+workflows(id, name, description, created_at, updated_at)
+steps(workflow_id, step_index, type, name)           -> FK to workflows (cascade)
+step_fields(workflow_id, step_index, field_key, field_value) -> FK to steps (cascade)
 ```
+
+Foreign keys with `ON DELETE CASCADE` keep steps and their fields tidy when a
+workflow is removed. The storage layer sits behind the `WorkflowRepository`
+interface, and a file-based implementation (`FileWorkflowRepository`, `.flow`
+text files) is also included; the app auto-migrates any pre-existing `.flow`
+files into SQLite on first run.

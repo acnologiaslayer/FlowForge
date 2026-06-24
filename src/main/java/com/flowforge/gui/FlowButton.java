@@ -81,6 +81,11 @@ public class FlowButton extends JButton {
     }
 
     private Color foregroundFor() {
+        // In Cyberpunk every button is dark-filled with neon text, so the
+        // foreground tracks the neon edge colour instead of the accent-text.
+        if (FlowTheme.active() == FlowTheme.CYBERPUNK) {
+            return style == Style.DANGER ? palette.danger() : palette.accent();
+        }
         return switch (style) {
             case PRIMARY, DANGER -> palette.accentText();
             case SECONDARY -> palette.foreground();
@@ -103,7 +108,9 @@ public class FlowButton extends JButton {
             base = FlowTheme.blend(base, Color.WHITE, style == Style.SECONDARY ? 0.06f : 0.12f);
         }
 
-        if (style == Style.SECONDARY) {
+        if (FlowTheme.active() == FlowTheme.CYBERPUNK) {
+            paintCyberpunk(g2, w, h, base);
+        } else if (style == Style.SECONDARY) {
             g2.setColor(base);
             g2.fillRoundRect(0, 0, w, h, arc, arc);
             g2.setColor(hovering ? palette.accent() : palette.border());
@@ -119,6 +126,45 @@ public class FlowButton extends JButton {
 
         g2.dispose();
         super.paintComponent(g);
+    }
+
+    /**
+     * Paints an angular, neon "cyberpunk" button: a chamfered (cut-corner)
+     * shape with a dark fill and a glowing edge that shifts to the danger
+     * colour on hover/press, mirroring the HUD aesthetic of the theme.
+     */
+    private void paintCyberpunk(Graphics2D g2, int w, int h, Color base) {
+        int cut = 9;
+        java.awt.geom.Path2D shape = new java.awt.geom.Path2D.Float();
+        shape.moveTo(cut, 1);
+        shape.lineTo(w - 1, 1);
+        shape.lineTo(w - 1, h - cut);
+        shape.lineTo(w - cut - 1, h - 1);
+        shape.lineTo(1, h - 1);
+        shape.lineTo(1, cut);
+        shape.closePath();
+
+        Color fill = switch (style) {
+            case PRIMARY, DANGER -> FlowTheme.blend(palette.background(), base, 0.28f);
+            case SECONDARY -> palette.background();
+        };
+        g2.setColor(fill);
+        g2.fill(shape);
+
+        Color edge = (hovering || pressed)
+                ? palette.danger()
+                : (style == Style.DANGER ? palette.danger() : palette.accent());
+        // Soft wide halo, then a crisp neon line on top.
+        g2.setColor(FlowTheme.alpha(edge, 70));
+        g2.setStroke(new BasicStroke(4.5f));
+        g2.draw(shape);
+        g2.setColor(edge);
+        g2.setStroke(new BasicStroke(hovering || pressed ? 2.2f : 1.4f));
+        g2.draw(shape);
+        // HUD accent notch in the top-left cut.
+        g2.fillRect(cut + 3, 2, 12, 2);
+
+        setForeground(edge);
     }
 
     @Override
