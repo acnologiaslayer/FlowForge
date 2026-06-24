@@ -16,7 +16,21 @@ public enum TaskType {
     DELAY("DELAY", "Delay",
             "Pause the workflow for a number of milliseconds."),
     WRITE_FILE("WRITE_FILE", "Write File",
-            "Write text content to a file on disk.");
+            "Write text content to a file on disk."),
+    HTTP_REQUEST("HTTP", "HTTP Request",
+            "Call an HTTP endpoint and store the status and body for later steps."),
+    JSON_EXTRACT("JSON", "JSON Extract",
+            "Parse a JSON value and pull a field out of it into a variable."),
+    IF("IF", "If",
+            "Branch the workflow: run the next steps only when a condition holds."),
+    ELSE("ELSE", "Else",
+            "Start the alternative branch of the enclosing If block."),
+    END_IF("END_IF", "End If",
+            "Close the enclosing If block."),
+    LOOP("LOOP", "Loop",
+            "Repeat the enclosed steps a number of times or while a condition holds."),
+    END_LOOP("END_LOOP", "End Loop",
+            "Close the enclosing Loop block.");
 
     private final String code;
     private final String label;

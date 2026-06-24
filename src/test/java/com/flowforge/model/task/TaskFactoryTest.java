@@ -76,4 +76,75 @@ class TaskFactoryTest {
     void unknownTaskCodeThrows() {
         assertThrows(IllegalArgumentException.class, () -> TaskType.fromCode("BOGUS"));
     }
+
+    // ---------- new control-flow / integration types ----------
+
+    @Test
+    void buildsHttpRequestTask() throws Exception {
+        Task task = TaskFactory.create(TaskType.HTTP_REQUEST, "Call", Map.of(
+                "method", "POST",
+                "url", "https://api.example.com",
+                "body", "{}",
+                "resultVariable", "resp",
+                "headers", "Accept:application/json"));
+        assertInstanceOf(HttpRequestTask.class, task);
+        HttpRequestTask http = (HttpRequestTask) task;
+        assertEquals(HttpRequestTask.Method.POST, http.getMethod());
+        assertEquals("application/json", http.getHeaders().get("Accept"));
+    }
+
+    @Test
+    void buildsJsonExtractTask() throws Exception {
+        Task task = TaskFactory.create(TaskType.JSON_EXTRACT, "Extract", Map.of(
+                "source", "${body}", "path", "user.name", "resultVariable", "name"));
+        assertInstanceOf(JsonExtractTask.class, task);
+        assertEquals("user.name", ((JsonExtractTask) task).getPath());
+    }
+
+    @Test
+    void buildsIfTaskFromCondition() throws Exception {
+        Task task = TaskFactory.create(TaskType.IF, "If", Map.of(
+                "left", "${x}", "comparator", ">", "right", "5"));
+        assertInstanceOf(IfTask.class, task);
+        assertEquals(Condition.Comparator.GREATER,
+                ((IfTask) task).getCondition().getComparator());
+    }
+
+    @Test
+    void buildsMarkerTasks() throws Exception {
+        assertInstanceOf(ElseTask.class, TaskFactory.create(TaskType.ELSE, "Else", Map.of()));
+        assertInstanceOf(EndIfTask.class, TaskFactory.create(TaskType.END_IF, "End", Map.of()));
+        assertInstanceOf(EndLoopTask.class,
+                TaskFactory.create(TaskType.END_LOOP, "End", Map.of()));
+    }
+
+    @Test
+    void buildsCountLoop() throws Exception {
+        Task task = TaskFactory.create(TaskType.LOOP, "Loop", Map.of(
+                "mode", "COUNT", "count", "5", "indexVariable", "i"));
+        assertInstanceOf(LoopTask.class, task);
+        assertEquals(LoopTask.Mode.COUNT, ((LoopTask) task).getMode());
+    }
+
+    @Test
+    void buildsWhileLoop() throws Exception {
+        Task task = TaskFactory.create(TaskType.LOOP, "Loop", Map.of(
+                "mode", "WHILE", "left", "${i}", "comparator", "<", "right", "5",
+                "indexVariable", "i"));
+        assertEquals(LoopTask.Mode.WHILE, ((LoopTask) task).getMode());
+    }
+
+    @Test
+    void invalidHttpMethodThrows() {
+        assertThrows(InvalidTaskConfigurationException.class,
+                () -> TaskFactory.create(TaskType.HTTP_REQUEST, "Call", Map.of(
+                        "method", "FETCH", "url", "https://x")));
+    }
+
+    @Test
+    void invalidComparatorThrows() {
+        assertThrows(InvalidTaskConfigurationException.class,
+                () -> TaskFactory.create(TaskType.IF, "If", Map.of(
+                        "left", "a", "comparator", "~~", "right", "b")));
+    }
 }

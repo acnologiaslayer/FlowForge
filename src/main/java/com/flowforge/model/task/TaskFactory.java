@@ -40,7 +40,70 @@ public final class TaskFactory {
                     fields.get("path"),
                     fields.getOrDefault("content", ""),
                     Boolean.parseBoolean(fields.getOrDefault("append", "false")));
+            case HTTP_REQUEST -> new HttpRequestTask(name,
+                    parseMethod(fields.get("method")),
+                    fields.get("url"),
+                    fields.getOrDefault("body", ""),
+                    HttpRequestTask.decodeHeaders(fields.get("headers")),
+                    fields.getOrDefault("resultVariable", "response"));
+            case JSON_EXTRACT -> new JsonExtractTask(name,
+                    fields.get("source"),
+                    fields.getOrDefault("path", ""),
+                    fields.get("resultVariable"));
+            case IF -> new IfTask(name, parseCondition(fields));
+            case ELSE -> new ElseTask(name);
+            case END_IF -> new EndIfTask(name);
+            case LOOP -> createLoop(name, fields);
+            case END_LOOP -> new EndLoopTask(name);
         };
+    }
+
+    private static Task createLoop(String name, Map<String, String> fields)
+            throws InvalidTaskConfigurationException {
+        LoopTask.Mode mode = parseLoopMode(fields.getOrDefault("mode", "COUNT"));
+        String indexVariable = fields.getOrDefault("indexVariable", "index");
+        if (mode == LoopTask.Mode.WHILE) {
+            return LoopTask.whileTrue(name, parseCondition(fields), indexVariable);
+        }
+        return LoopTask.count(name, fields.get("count"), indexVariable);
+    }
+
+    private static Condition parseCondition(Map<String, String> fields)
+            throws InvalidTaskConfigurationException {
+        return new Condition(
+                fields.get("left"),
+                parseComparator(fields.get("comparator")),
+                fields.getOrDefault("right", ""));
+    }
+
+    private static HttpRequestTask.Method parseMethod(String value)
+            throws InvalidTaskConfigurationException {
+        try {
+            return HttpRequestTask.Method.valueOf(value == null ? "GET" : value.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new InvalidTaskConfigurationException(
+                    "Invalid HTTP method '" + value + "'. Use GET, POST, PUT, DELETE or PATCH.");
+        }
+    }
+
+    private static Condition.Comparator parseComparator(String code)
+            throws InvalidTaskConfigurationException {
+        try {
+            return Condition.Comparator.fromCode(code);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidTaskConfigurationException(
+                    "Invalid condition comparator '" + code + "'.");
+        }
+    }
+
+    private static LoopTask.Mode parseLoopMode(String value)
+            throws InvalidTaskConfigurationException {
+        try {
+            return LoopTask.Mode.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new InvalidTaskConfigurationException(
+                    "Invalid loop mode '" + value + "'. Use COUNT or WHILE.");
+        }
     }
 
     private static ComputeTask.Operator parseOperator(String symbol)
