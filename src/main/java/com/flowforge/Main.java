@@ -10,6 +10,7 @@ import com.flowforge.model.task.LogTask;
 import com.flowforge.model.task.SetVariableTask;
 import com.flowforge.model.task.WriteFileTask;
 import com.flowforge.persistence.FileWorkflowRepository;
+import com.flowforge.persistence.SqliteWorkflowRepository;
 import com.flowforge.persistence.WorkflowRepository;
 import com.flowforge.service.WorkflowEngine;
 import com.flowforge.service.WorkflowManager;
@@ -29,7 +30,9 @@ public class Main {
     public static void main(String[] args) {
         boolean console = args.length > 0 && args[0].equalsIgnoreCase("--console");
         try {
-            WorkflowRepository repository = new FileWorkflowRepository(Path.of("data"));
+            Path dataDir = Path.of("data");
+            WorkflowRepository repository = new SqliteWorkflowRepository(dataDir);
+            migrateLegacyFiles(dataDir, repository);
             WorkflowManager manager = new WorkflowManager(repository);
             WorkflowEngine engine = new WorkflowEngine();
 
@@ -53,6 +56,35 @@ public class Main {
             FlowTheme.MIDNIGHT.apply();
         } catch (Exception e) {
             System.err.println("Could not install theme: " + e.getMessage());
+        }
+    }
+
+    /**
+     * One-time import of workflows from the old {@code .flow} file store into
+     * SQLite, so data created before the switch to SQLite is not lost. Runs
+     * only when the database is empty and legacy files exist; the imported
+     * files are then removed.
+     */
+    private static void migrateLegacyFiles(Path dataDir, WorkflowRepository sqlite) {
+        try {
+            if (!java.nio.file.Files.isDirectory(dataDir)) {
+                return;
+            }
+            boolean hasFlowFiles;
+            try (var files = java.nio.file.Files.list(dataDir)) {
+                hasFlowFiles = files.anyMatch(p -> p.toString().endsWith(".flow"));
+            }
+            if (!hasFlowFiles || !sqlite.loadAll().isEmpty()) {
+                return;
+            }
+            FileWorkflowRepository legacy = new FileWorkflowRepository(dataDir);
+            for (Workflow workflow : legacy.loadAll()) {
+                sqlite.save(workflow);
+                legacy.delete(workflow.getId());
+            }
+            System.out.println("Migrated legacy .flow files into SQLite.");
+        } catch (Exception e) {
+            System.err.println("Could not migrate legacy workflow files: " + e.getMessage());
         }
     }
 

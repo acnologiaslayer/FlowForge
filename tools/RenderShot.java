@@ -2,7 +2,7 @@ package com.flowforge;
 
 import com.flowforge.gui.FlowForgeApp;
 import com.flowforge.gui.FlowTheme;
-import com.flowforge.persistence.FileWorkflowRepository;
+import com.flowforge.persistence.SqliteWorkflowRepository;
 import com.flowforge.service.WorkflowEngine;
 import com.flowforge.service.WorkflowManager;
 
@@ -23,7 +23,7 @@ public final class RenderShot {
         String dataDir = args.length > 0 ? args[0] : "data";
         String outDir = args.length > 1 ? args[1] : "/tmp";
 
-        WorkflowManager manager = new WorkflowManager(new FileWorkflowRepository(Path.of(dataDir)));
+        WorkflowManager manager = new WorkflowManager(new SqliteWorkflowRepository(Path.of(dataDir)));
         WorkflowEngine engine = new WorkflowEngine();
 
         for (FlowTheme theme : FlowTheme.values()) {
