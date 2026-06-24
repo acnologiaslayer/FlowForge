@@ -1,21 +1,26 @@
 package com.flowforge.service;
 
-import com.flowforge.exception.TaskExecutionException;
 import com.flowforge.exception.WorkflowValidationException;
 import com.flowforge.model.ExecutionContext;
 import com.flowforge.model.RunReport;
-import com.flowforge.model.StepResult;
 import com.flowforge.model.Workflow;
-import com.flowforge.model.task.Task;
+import com.flowforge.service.flow.FlowExecution;
+import com.flowforge.service.flow.FlowParser;
+import com.flowforge.service.flow.SequenceNode;
 
 /**
- * Executes a {@link Workflow} step by step.
+ * Executes a {@link Workflow}.
  * <p>
  * Single responsibility: the engine knows how to <em>run</em> workflows but
  * nothing about how they are stored or displayed. It validates the workflow,
- * runs each {@link Task} against a shared {@link ExecutionContext}, stops at
- * the first failure, and reports progress to an optional
- * {@link WorkflowExecutionListener}.
+ * compiles its flat step list into a control-flow tree (see
+ * {@link FlowParser}), then walks that tree against a shared
+ * {@link ExecutionContext}, stopping at the first failure and reporting
+ * progress to an optional {@link WorkflowExecutionListener}.
+ * <p>
+ * Compiling to a tree (the Composite pattern) is what lets the engine support
+ * real control flow - IF/ELSE branching and counted/while loops - while the
+ * model and persistence layers still deal with a simple ordered list of steps.
  */
 public class WorkflowEngine {
 
@@ -33,31 +38,13 @@ public class WorkflowEngine {
             throws WorkflowValidationException {
         validate(workflow);
 
+        SequenceNode program = FlowParser.compile(workflow);
+
         RunReport report = new RunReport(workflow.getName());
         notifyStarted(listener, workflow);
 
-        for (int i = 0; i < workflow.stepCount(); i++) {
-            Task task = workflow.getStep(i);
-            notifyStepStarted(listener, i, workflow);
-
-            long start = System.nanoTime();
-            StepResult result;
-            try {
-                String message = task.run(context);
-                long elapsed = millisSince(start);
-                result = StepResult.success(i, task, message, elapsed);
-            } catch (TaskExecutionException e) {
-                long elapsed = millisSince(start);
-                result = StepResult.failure(i, task, e.getMessage(), elapsed);
-            }
-
-            report.add(result);
-            notifyStepFinished(listener, result);
-
-            if (!result.isSuccess()) {
-                break; // fail fast
-            }
-        }
+        FlowExecution execution = new FlowExecution(workflow, context, report, listener);
+        program.execute(execution);
 
         notifyFinished(listener, workflow, report.isSuccess());
         return report;
@@ -81,27 +68,11 @@ public class WorkflowEngine {
         }
     }
 
-    private static long millisSince(long startNanos) {
-        return (System.nanoTime() - startNanos) / 1_000_000;
-    }
-
     // ---------- null-safe listener helpers ----------
 
     private void notifyStarted(WorkflowExecutionListener l, Workflow w) {
         if (l != null) {
             l.onWorkflowStarted(w);
-        }
-    }
-
-    private void notifyStepStarted(WorkflowExecutionListener l, int i, Workflow w) {
-        if (l != null) {
-            l.onStepStarted(i, w);
-        }
-    }
-
-    private void notifyStepFinished(WorkflowExecutionListener l, StepResult r) {
-        if (l != null) {
-            l.onStepFinished(r);
         }
     }
 
