@@ -283,7 +283,8 @@ public class FlowForgeApp extends JFrame {
 
     private void logout() {
         if (!ConfirmDialog.ask(this, "Log out",
-                "Log out " + user.getUsername() + " and return to the login screen?")) {
+                "Log out " + user.getUsername() + " and return to the login screen?",
+                "Log Out", false)) {
             return;
         }
         // Closing the window shuts down this session's thread pool via the

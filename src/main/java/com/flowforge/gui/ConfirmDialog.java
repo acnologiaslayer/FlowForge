@@ -14,26 +14,47 @@ import java.awt.Font;
 import java.awt.Window;
 
 /**
- * A themed yes/no confirmation dialog, used for destructive actions such as
- * deleting a workflow. Like the other pop-ups it is undecorated with a
- * custom {@link TitleBar} so it follows the active {@link FlowTheme}.
+ * A themed yes/no confirmation dialog. The default {@link #ask} is styled for
+ * destructive actions (red accent, "Delete" button); {@link #ask(Component,
+ * String, String, String, boolean)} lets callers supply their own confirm
+ * label and choose a neutral (non-destructive) accent. Like the other pop-ups
+ * it is undecorated with a custom {@link TitleBar} so it follows the active
+ * {@link FlowTheme}.
  */
 public final class ConfirmDialog {
 
     private ConfirmDialog() {
     }
 
-    /** @return {@code true} if the user confirmed, {@code false} otherwise. */
+    /**
+     * Destructive confirmation (red accent, "Delete" confirm button).
+     *
+     * @return {@code true} if the user confirmed, {@code false} otherwise.
+     */
     public static boolean ask(Component parent, String title, String message) {
+        return ask(parent, title, message, "Delete", true);
+    }
+
+    /**
+     * Confirmation with a custom confirm-button label.
+     *
+     * @param confirmLabel text for the confirm button (e.g. "Log Out")
+     * @param destructive  {@code true} for a red/danger accent, {@code false}
+     *                     for a neutral accent and a primary-styled button
+     * @return {@code true} if the user confirmed, {@code false} otherwise.
+     */
+    public static boolean ask(Component parent, String title, String message,
+                              String confirmLabel, boolean destructive) {
         Window owner = parent == null ? null : SwingUtilities.getWindowAncestor(parent);
         JDialog dialog = new JDialog(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setUndecorated(true);
 
         FlowTheme theme = FlowTheme.active();
         FlowTheme.Palette p = theme.palette();
+        java.awt.Color accent = destructive ? p.danger() : p.accent();
 
         JPanel root = new JPanel(new BorderLayout(10, 10));
-        root.setBorder(BorderFactory.createLineBorder(p.danger(), 1));
+        root.setBorder(BorderFactory.createLineBorder(accent, 1));
         root.setBackground(p.background());
         dialog.setContentPane(root);
 
@@ -43,9 +64,9 @@ public final class ConfirmDialog {
         JPanel body = new JPanel(new BorderLayout(14, 0));
         body.setOpaque(false);
         body.setBorder(BorderFactory.createEmptyBorder(16, 22, 8, 22));
-        JLabel icon = new JLabel("\u26A0");
+        JLabel icon = new JLabel(destructive ? "\u26A0" : "\u2753");
         icon.setFont(icon.getFont().deriveFont(Font.BOLD, 24f));
-        icon.setForeground(p.danger());
+        icon.setForeground(accent);
         body.add(icon, BorderLayout.WEST);
         JLabel text = new JLabel("<html><body style='width:260px'>" + message + "</body></html>");
         text.setForeground(p.foreground());
@@ -57,7 +78,8 @@ public final class ConfirmDialog {
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 10));
         bar.setOpaque(false);
         FlowButton cancel = new FlowButton("Cancel", FlowButton.Style.SECONDARY);
-        FlowButton confirm = new FlowButton("Delete", FlowButton.Style.DANGER);
+        FlowButton confirm = new FlowButton(confirmLabel,
+                destructive ? FlowButton.Style.DANGER : FlowButton.Style.PRIMARY);
         cancel.applyPalette(p);
         confirm.applyPalette(p);
         cancel.addActionListener(e -> dialog.dispose());
