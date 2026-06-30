@@ -77,6 +77,9 @@ public class Main {
             seedExampleIfEmpty(manager);
             WorkflowExecutionService executionService = new WorkflowExecutionService(engine);
             FlowForgeApp app = new FlowForgeApp(manager, executionService, user);
+            // On logout, the window has already disposed itself (shutting down
+            // its thread pool); reopen the login screen for the next user.
+            app.setOnLogout(() -> launchGui(dataDir, authService, engine));
             app.setVisible(true);
         } catch (PersistenceException e) {
             System.err.println("Could not open FlowForge: " + e.getMessage());

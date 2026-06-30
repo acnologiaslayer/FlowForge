@@ -70,6 +70,7 @@ public class FlowForgeApp extends JFrame {
     private TitleBar titleBar;
     private final java.util.List<JPanel> surfaces = new ArrayList<>();
     private final java.util.List<FlowButton> buttons = new ArrayList<>();
+    private Runnable onLogout;
 
     public FlowForgeApp(WorkflowManager manager, WorkflowExecutionService executionService, User user) {
         super("FlowForge");
@@ -91,6 +92,7 @@ public class FlowForgeApp extends JFrame {
 
         buildUI();
         refreshWorkflowList();
+        userLabel.setText("\uD83D\uDC64 " + user.getUsername());
         applyTheme(FlowTheme.active());
     }
 
@@ -242,18 +244,54 @@ public class FlowForgeApp extends JFrame {
         statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, 12f));
         bar.add(statusLabel, BorderLayout.WEST);
 
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        right.setOpaque(false);
+
+        userLabel.setFont(userLabel.getFont().deriveFont(Font.BOLD, 12f));
+        right.add(userLabel);
+
+        FlowButton logoutButton = secondaryButton("Log Out");
+        logoutButton.addActionListener(e -> logout());
+        right.add(logoutButton);
+
         ThemeSelector selector = new ThemeSelector(this::applyTheme);
-        bar.add(selector, BorderLayout.EAST);
+        right.add(selector);
         this.themeSelector = selector;
+
+        bar.add(right, BorderLayout.EAST);
         return bar;
     }
 
     private ThemeSelector themeSelector;
+    private final JLabel userLabel = new JLabel();
 
     /** Dev/test hook: selects the first workflow so screenshots show steps. */
     public void selectFirstWorkflowForShot() {
         if (workflowModel.getSize() > 0) {
             workflowList.setSelectedIndex(0);
+        }
+    }
+
+    /**
+     * Registers the action to run when the user logs out. The host
+     * ({@code Main}) sets this to reopen the login screen with a fresh,
+     * user-scoped session.
+     */
+    public void setOnLogout(Runnable onLogout) {
+        this.onLogout = onLogout;
+    }
+
+    private void logout() {
+        if (!ConfirmDialog.ask(this, "Log out",
+                "Log out " + user.getUsername() + " and return to the login screen?")) {
+            return;
+        }
+        // Closing the window shuts down this session's thread pool via the
+        // window listener; the host then shows the login screen again.
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        dispose();
+        if (onLogout != null) {
+            onLogout.run();
         }
     }
 
@@ -572,6 +610,7 @@ public class FlowForgeApp extends JFrame {
         headerTitle.setForeground(p.foreground());
         headerSubtitle.setForeground(FlowTheme.blend(p.foreground(), p.background(), 0.35f));
         statusLabel.setForeground(FlowTheme.blend(p.foreground(), p.background(), 0.25f));
+        userLabel.setForeground(p.accent());
         runLog.setBackground(FlowTheme.blend(p.surface(), p.background(), 0.3f));
 
         for (FlowButton button : buttons) {
