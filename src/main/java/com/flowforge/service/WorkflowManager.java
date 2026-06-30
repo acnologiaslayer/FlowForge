@@ -27,9 +27,16 @@ public class WorkflowManager {
     private final WorkflowRepository repository;
     private final Map<String, Workflow> workflows = new ConcurrentHashMap<>();
     private final AtomicInteger sequence = new AtomicInteger(0);
+    private final String idPrefix;
 
     public WorkflowManager(WorkflowRepository repository) throws PersistenceException {
+        this(repository, "wf");
+    }
+
+    public WorkflowManager(WorkflowRepository repository, String ownerUsername)
+            throws PersistenceException {
         this.repository = repository;
+        this.idPrefix = sanitizePrefix(ownerUsername);
         for (Workflow workflow : repository.loadAll()) {
             workflows.put(workflow.getId(), workflow);
             trackSequence(workflow.getId());
@@ -92,18 +99,27 @@ public class WorkflowManager {
     // ---------- helpers ----------
 
     private String nextId() {
-        return String.format("wf-%04d", sequence.incrementAndGet());
+        return String.format("%s-%04d", idPrefix, sequence.incrementAndGet());
     }
 
     /** Keeps the id sequence ahead of any ids loaded from disk. */
     private void trackSequence(String id) {
-        if (id != null && id.startsWith("wf-")) {
+        String prefix = idPrefix + "-";
+        if (id != null && id.startsWith(prefix)) {
             try {
-                int value = Integer.parseInt(id.substring(3));
+                int value = Integer.parseInt(id.substring(prefix.length()));
                 sequence.accumulateAndGet(value, Math::max);
             } catch (NumberFormatException ignored) {
                 // non-standard id; leave the sequence untouched
             }
         }
+    }
+
+    private static String sanitizePrefix(String username) {
+        String normalized = username == null ? "wf" : username.trim().toLowerCase();
+        if (normalized.isBlank() || normalized.equals("wf")) {
+            return "wf";
+        }
+        return "wf-" + normalized.replaceAll("[^a-z0-9_]+", "_");
     }
 }

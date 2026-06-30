@@ -25,27 +25,27 @@ import java.util.Map;
 /**
  * Workflow store backed by an SQLite database (via the xerial JDBC driver).
  * <p>
- * Implements the same {@link WorkflowRepository} interface as the file
- * store, so the service layer is unaffected by the change of storage
- * technology. The schema is normalised across three tables:
- * <ul>
- *   <li>{@code workflows} - one row per workflow (id, name, description,
- *       timestamps).</li>
- *   <li>{@code steps} - one row per step, ordered by {@code step_index} and
- *       linked to its workflow.</li>
- *   <li>{@code step_fields} - one row per task configuration field, linked to
- *       its step.</li>
- * </ul>
- * Foreign keys with {@code ON DELETE CASCADE} keep steps and fields tidy
- * when a workflow is removed.
+ * The schema is normalised across workflows/steps/step_fields and now includes
+ * an optional {@code owner_username} column. Constructing this repository with
+ * a username activates multi-user mode: load/save/delete operations are scoped
+ * to that owner, so different users can share one database safely.
  */
 public class SqliteWorkflowRepository implements WorkflowRepository {
 
     private final String url;
+    private final String ownerUsername;
 
+    /** Legacy/admin constructor: sees all workflows and writes unowned rows. */
     public SqliteWorkflowRepository(Path dataDirectory) throws PersistenceException {
+        this(dataDirectory, null);
+    }
+
+    /** User-scoped constructor: sees and writes only workflows owned by username. */
+    public SqliteWorkflowRepository(Path dataDirectory, String ownerUsername)
+            throws PersistenceException {
         Path databaseFile = dataDirectory.resolve("flowforge.db");
         this.url = "jdbc:sqlite:" + databaseFile;
+        this.ownerUsername = normalizeOwner(ownerUsername);
         try {
             Files.createDirectories(dataDirectory);
         } catch (IOException e) {
@@ -57,13 +57,22 @@ public class SqliteWorkflowRepository implements WorkflowRepository {
     // ---------- schema ----------
 
     private void createSchema() throws PersistenceException {
+        String users = """
+                CREATE TABLE IF NOT EXISTS users (
+                    username      TEXT PRIMARY KEY,
+                    password_hash TEXT NOT NULL,
+                    salt          TEXT NOT NULL,
+                    created_at    INTEGER NOT NULL
+                );""";
         String workflows = """
                 CREATE TABLE IF NOT EXISTS workflows (
-                    id          TEXT PRIMARY KEY,
-                    name        TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    created_at  INTEGER NOT NULL,
-                    updated_at  INTEGER NOT NULL
+                    id             TEXT PRIMARY KEY,
+                    owner_username TEXT,
+                    name           TEXT NOT NULL,
+                    description    TEXT NOT NULL,
+                    created_at     INTEGER NOT NULL,
+                    updated_at     INTEGER NOT NULL,
+                    FOREIGN KEY (owner_username) REFERENCES users(username) ON DELETE CASCADE
                 );""";
         String steps = """
                 CREATE TABLE IF NOT EXISTS steps (
@@ -84,13 +93,28 @@ public class SqliteWorkflowRepository implements WorkflowRepository {
                     FOREIGN KEY (workflow_id, step_index)
                         REFERENCES steps(workflow_id, step_index) ON DELETE CASCADE
                 );""";
-        try (Connection conn = connect();
-             Statement stmt = conn.createStatement()) {
+        try (Connection conn = connect(); Statement stmt = conn.createStatement()) {
+            stmt.execute(users);
             stmt.execute(workflows);
+            addOwnerColumnIfMissing(conn);
             stmt.execute(steps);
             stmt.execute(stepFields);
         } catch (SQLException e) {
             throw new PersistenceException("Could not initialise the database", e);
+        }
+    }
+
+    /** Adds owner_username for databases created before multi-user support. */
+    private void addOwnerColumnIfMissing(Connection conn) throws SQLException {
+        try (ResultSet rs = conn.createStatement().executeQuery("PRAGMA table_info(workflows)")) {
+            while (rs.next()) {
+                if ("owner_username".equalsIgnoreCase(rs.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE workflows ADD COLUMN owner_username TEXT");
         }
     }
 
@@ -99,20 +123,24 @@ public class SqliteWorkflowRepository implements WorkflowRepository {
     @Override
     public List<Workflow> loadAll() throws PersistenceException {
         List<Workflow> workflows = new ArrayList<>();
-        String sql = "SELECT id, name, description, created_at, updated_at "
-                + "FROM workflows ORDER BY id";
-        try (Connection conn = connect();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            while (rs.next()) {
-                Workflow workflow = new Workflow(
-                        rs.getString("id"),
-                        rs.getString("name"),
-                        rs.getString("description"),
-                        Instant.ofEpochMilli(rs.getLong("created_at")),
-                        Instant.ofEpochMilli(rs.getLong("updated_at")));
-                loadSteps(conn, workflow);
-                workflows.add(workflow);
+        String sql = "SELECT id, name, description, created_at, updated_at FROM workflows "
+                + (isUserScoped() ? "WHERE owner_username = ? " : "")
+                + "ORDER BY id";
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            if (isUserScoped()) {
+                pstmt.setString(1, ownerUsername);
+            }
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    Workflow workflow = new Workflow(
+                            rs.getString("id"),
+                            rs.getString("name"),
+                            rs.getString("description"),
+                            Instant.ofEpochMilli(rs.getLong("created_at")),
+                            Instant.ofEpochMilli(rs.getLong("updated_at")));
+                    loadSteps(conn, workflow);
+                    workflows.add(workflow);
+                }
             }
         } catch (SQLException e) {
             throw new PersistenceException("Could not load workflows from the database", e);
@@ -181,13 +209,15 @@ public class SqliteWorkflowRepository implements WorkflowRepository {
 
     private void upsertWorkflow(Connection conn, Workflow workflow) throws SQLException {
         String sql = "INSERT OR REPLACE INTO workflows "
-                + "(id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)";
+                + "(id, owner_username, name, description, created_at, updated_at) "
+                + "VALUES (?, ?, ?, ?, ?, ?)";
         try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, workflow.getId());
-            pstmt.setString(2, workflow.getName());
-            pstmt.setString(3, workflow.getDescription());
-            pstmt.setLong(4, workflow.getCreatedAt().toEpochMilli());
-            pstmt.setLong(5, workflow.getUpdatedAt().toEpochMilli());
+            pstmt.setString(2, ownerUsername);
+            pstmt.setString(3, workflow.getName());
+            pstmt.setString(4, workflow.getDescription());
+            pstmt.setLong(5, workflow.getCreatedAt().toEpochMilli());
+            pstmt.setLong(6, workflow.getUpdatedAt().toEpochMilli());
             pstmt.executeUpdate();
         }
     }
@@ -220,7 +250,6 @@ public class SqliteWorkflowRepository implements WorkflowRepository {
     }
 
     private void deleteSteps(Connection conn, String workflowId) throws SQLException {
-        // step_fields cascade from steps, so deleting the steps is enough.
         try (PreparedStatement pstmt =
                      conn.prepareStatement("DELETE FROM steps WHERE workflow_id = ?")) {
             pstmt.setString(1, workflowId);
@@ -230,10 +259,13 @@ public class SqliteWorkflowRepository implements WorkflowRepository {
 
     @Override
     public void delete(String workflowId) throws PersistenceException {
-        try (Connection conn = connect();
-             PreparedStatement pstmt =
-                     conn.prepareStatement("DELETE FROM workflows WHERE id = ?")) {
+        String sql = "DELETE FROM workflows WHERE id = ?" +
+                (isUserScoped() ? " AND owner_username = ?" : "");
+        try (Connection conn = connect(); PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, workflowId);
+            if (isUserScoped()) {
+                pstmt.setString(2, ownerUsername);
+            }
             pstmt.executeUpdate();
         } catch (SQLException e) {
             throw new PersistenceException("Could not delete workflow " + workflowId, e);
@@ -242,15 +274,22 @@ public class SqliteWorkflowRepository implements WorkflowRepository {
 
     // ---------- helpers ----------
 
-    /**
-     * Opens a connection with foreign-key enforcement enabled (SQLite has it
-     * off by default), so the {@code ON DELETE CASCADE} rules take effect.
-     */
     private Connection connect() throws SQLException {
         Connection conn = DriverManager.getConnection(url);
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("PRAGMA foreign_keys = ON;");
         }
         return conn;
+    }
+
+    private boolean isUserScoped() {
+        return ownerUsername != null && !ownerUsername.isBlank();
+    }
+
+    private static String normalizeOwner(String ownerUsername) {
+        if (ownerUsername == null || ownerUsername.isBlank()) {
+            return null;
+        }
+        return ownerUsername.trim().toLowerCase();
     }
 }
