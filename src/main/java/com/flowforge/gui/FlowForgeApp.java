@@ -1,13 +1,13 @@
 package com.flowforge.gui;
 
 import com.flowforge.exception.WorkflowException;
-import com.flowforge.model.RunReport;
-import com.flowforge.model.StepResult;
-import com.flowforge.model.Workflow;
 import com.flowforge.model.ExecutionContext;
+import com.flowforge.model.StepResult;
+import com.flowforge.model.User;
+import com.flowforge.model.Workflow;
 import com.flowforge.model.task.Task;
 import com.flowforge.model.task.TaskType;
-import com.flowforge.service.WorkflowEngine;
+import com.flowforge.service.WorkflowExecutionService;
 import com.flowforge.service.WorkflowExecutionListener;
 import com.flowforge.service.WorkflowManager;
 
@@ -23,7 +23,6 @@ import javax.swing.JSplitPane;
 import javax.swing.JTextPane;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
-import javax.swing.SwingWorker;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
@@ -35,9 +34,12 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridLayout;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.concurrent.CompletionException;
 
 /**
  * The main FlowForge window: a custom, undecorated, fully themed frame.
@@ -52,7 +54,8 @@ import java.util.ArrayList;
 public class FlowForgeApp extends JFrame {
 
     private final WorkflowManager manager;
-    private final WorkflowEngine engine;
+    private final WorkflowExecutionService executionService;
+    private final User user;
 
     private final DefaultListModel<Workflow> workflowModel = new DefaultListModel<>();
     private final JList<Workflow> workflowList = new JList<>(workflowModel);
@@ -68,16 +71,23 @@ public class FlowForgeApp extends JFrame {
     private final java.util.List<JPanel> surfaces = new ArrayList<>();
     private final java.util.List<FlowButton> buttons = new ArrayList<>();
 
-    public FlowForgeApp(WorkflowManager manager, WorkflowEngine engine) {
+    public FlowForgeApp(WorkflowManager manager, WorkflowExecutionService executionService, User user) {
         super("FlowForge");
         this.manager = manager;
-        this.engine = engine;
+        this.executionService = executionService;
+        this.user = user;
 
         setUndecorated(true);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setSize(1040, 680);
         setMinimumSize(new Dimension(820, 540));
         setLocationRelativeTo(null);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent e) {
+                executionService.close();
+            }
+        });
 
         buildUI();
         refreshWorkflowList();
@@ -91,7 +101,7 @@ public class FlowForgeApp extends JFrame {
         root.setBorder(BorderFactory.createLineBorder(FlowTheme.active().palette().accent(), 1));
         setContentPane(root);
 
-        titleBar = new TitleBar(this, "FlowForge  -  Workflow Automation Studio");
+        titleBar = new TitleBar(this, "FlowForge  -  " + user.getUsername() + "  -  Workflow Automation Studio");
         root.add(titleBar, BorderLayout.NORTH);
 
         JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
@@ -370,20 +380,16 @@ public class FlowForgeApp extends JFrame {
             return;
         }
         appendLog("\n=== Running '" + workflow.getName() + "' ===\n", LogStyle.HEADER);
-        setStatus("Running '" + workflow.getName() + "'...");
+        setStatus("Queued '" + workflow.getName() + "' on background runner...");
 
-        // Run off the EDT so a Delay step does not freeze the UI; stream
-        // progress back onto the EDT through the listener.
-        new SwingWorker<RunReport, String>() {
-            @Override
-            protected RunReport doInBackground() throws Exception {
-                return engine.run(workflow, new ExecutionContext(), new LiveListener());
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    RunReport report = get();
+        executionService.runAsync(workflow, new ExecutionContext(), new LiveListener())
+                .whenComplete((report, throwable) -> SwingUtilities.invokeLater(() -> {
+                    if (throwable != null) {
+                        Throwable cause = unwrap(throwable);
+                        appendLog("Run error: " + cause.getMessage() + "\n", LogStyle.ERROR);
+                        setStatus("Run error");
+                        return;
+                    }
                     if (report.isSuccess()) {
                         appendLog(String.format("Completed %d/%d steps in %d ms.%n",
                                         report.getCompletedSteps(), workflow.stepCount(),
@@ -397,12 +403,18 @@ public class FlowForgeApp extends JFrame {
                                 LogStyle.ERROR);
                         setStatus("Run failed");
                     }
-                } catch (Exception ex) {
-                    appendLog("Run error: " + ex.getMessage() + "\n", LogStyle.ERROR);
-                    setStatus("Run error");
-                }
-            }
-        }.execute();
+                }));
+    }
+
+    private Throwable unwrap(Throwable throwable) {
+        if (throwable instanceof CompletionException && throwable.getCause() != null) {
+            return throwable.getCause();
+        }
+        if (throwable instanceof WorkflowExecutionService.WorkflowRunException
+                && throwable.getCause() != null) {
+            return throwable.getCause();
+        }
+        return throwable;
     }
 
     /** Streams engine callbacks into the run log on the EDT. */
@@ -545,7 +557,7 @@ public class FlowForgeApp extends JFrame {
         }
         SwingUtilities.updateComponentTreeUI(this);
         repaintChrome(theme.palette());
-        setStatus("Theme: " + theme.getLabel());
+        setStatus("Logged in as " + user.getUsername());
     }
 
     private void repaintChrome(FlowTheme.Palette p) {

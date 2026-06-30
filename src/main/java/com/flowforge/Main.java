@@ -1,9 +1,12 @@
 package com.flowforge;
 
+import com.flowforge.exception.AuthenticationException;
 import com.flowforge.exception.PersistenceException;
 import com.flowforge.exception.WorkflowException;
 import com.flowforge.gui.FlowForgeApp;
 import com.flowforge.gui.FlowTheme;
+import com.flowforge.gui.LoginDialog;
+import com.flowforge.model.User;
 import com.flowforge.model.Workflow;
 import com.flowforge.model.task.ComputeTask;
 import com.flowforge.model.task.Condition;
@@ -17,9 +20,12 @@ import com.flowforge.model.task.LoopTask;
 import com.flowforge.model.task.SetVariableTask;
 import com.flowforge.model.task.WriteFileTask;
 import com.flowforge.persistence.FileWorkflowRepository;
+import com.flowforge.persistence.SqliteUserRepository;
 import com.flowforge.persistence.SqliteWorkflowRepository;
 import com.flowforge.persistence.WorkflowRepository;
+import com.flowforge.service.AuthService;
 import com.flowforge.service.WorkflowEngine;
+import com.flowforge.service.WorkflowExecutionService;
 import com.flowforge.service.WorkflowManager;
 import com.flowforge.ui.ConsoleUI;
 
@@ -29,8 +35,8 @@ import java.util.Scanner;
 
 /**
  * Entry point. Wires the layers together
- * (repository -> manager/engine -> UI) and launches the Swing GUI by
- * default. Pass {@code --console} to use the text interface instead.
+ * (repository -> manager/engine -> UI) and launches the Swing GUI by default.
+ * Pass {@code --console} to use the text interface instead.
  */
 public class Main {
 
@@ -38,23 +44,63 @@ public class Main {
         boolean console = args.length > 0 && args[0].equalsIgnoreCase("--console");
         try {
             Path dataDir = Path.of("data");
-            WorkflowRepository repository = new SqliteWorkflowRepository(dataDir);
-            migrateLegacyFiles(dataDir, repository);
-            WorkflowManager manager = new WorkflowManager(repository);
+            WorkflowRepository legacyRepository = new SqliteWorkflowRepository(dataDir);
+            migrateLegacyFiles(dataDir, legacyRepository);
+
+            AuthService authService = new AuthService(new SqliteUserRepository(dataDir));
             WorkflowEngine engine = new WorkflowEngine();
 
-            seedExampleIfEmpty(manager);
-
             if (console) {
-                new ConsoleUI(manager, engine, new Scanner(System.in)).run();
+                Scanner scanner = new Scanner(System.in);
+                User user = authenticateConsole(authService, scanner);
+                WorkflowRepository repository = new SqliteWorkflowRepository(dataDir, user.getUsername());
+                WorkflowManager manager = new WorkflowManager(repository, user.getUsername());
+                seedExampleIfEmpty(manager);
+                new ConsoleUI(manager, engine, scanner).run();
             } else {
-                SwingUtilities.invokeLater(() -> {
-                    installInitialTheme();
-                    new FlowForgeApp(manager, engine).setVisible(true);
-                });
+                SwingUtilities.invokeLater(() -> launchGui(dataDir, authService, engine));
             }
         } catch (PersistenceException e) {
             System.err.println("Could not start FlowForge: " + e.getMessage());
+        }
+    }
+
+    private static void launchGui(Path dataDir, AuthService authService, WorkflowEngine engine) {
+        try {
+            installInitialTheme();
+            User user = new LoginDialog(authService).show(null);
+            if (user == null) {
+                System.exit(0);
+            }
+            WorkflowRepository repository = new SqliteWorkflowRepository(dataDir, user.getUsername());
+            WorkflowManager manager = new WorkflowManager(repository, user.getUsername());
+            seedExampleIfEmpty(manager);
+            WorkflowExecutionService executionService = new WorkflowExecutionService(engine);
+            FlowForgeApp app = new FlowForgeApp(manager, executionService, user);
+            app.setVisible(true);
+        } catch (PersistenceException e) {
+            System.err.println("Could not open FlowForge: " + e.getMessage());
+        }
+    }
+
+    private static User authenticateConsole(AuthService authService, Scanner scanner)
+            throws PersistenceException {
+        while (true) {
+            System.out.println("=== FlowForge Login ===");
+            System.out.print("Login or register? [l/r]: ");
+            String mode = scanner.nextLine().trim().toLowerCase();
+            System.out.print("Username: ");
+            String username = scanner.nextLine();
+            System.out.print("Password: ");
+            char[] password = scanner.nextLine().toCharArray();
+            try {
+                if (mode.startsWith("r") || !authService.hasUsers()) {
+                    return authService.register(username, password);
+                }
+                return authService.login(username, password);
+            } catch (AuthenticationException e) {
+                System.out.println(e.getMessage());
+            }
         }
     }
 
@@ -95,7 +141,7 @@ public class Main {
         }
     }
 
-    /** Creates a demonstration workflow on first run so the app is not empty. */
+    /** Creates demonstration workflows per user on first login so the app is not empty. */
     private static void seedExampleIfEmpty(WorkflowManager manager) {
         if (manager.count() > 0) {
             return;
@@ -121,10 +167,6 @@ public class Main {
         }
     }
 
-    /**
-     * A second sample that showcases the n8n-style capabilities: an HTTP
-     * request, JSON extraction, conditional branching and a loop.
-     */
     private static void seedApiWorkflow(WorkflowManager manager) throws WorkflowException {
         Workflow api = manager.createWorkflow("API Health Check",
                 "Calls a public API, inspects the JSON, branches on the result and loops.");

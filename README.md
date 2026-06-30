@@ -30,6 +30,13 @@ JUnit 5 test coverage.
 
 ## Highlights
 
+- **Multi-user accounts** - a login/register screen gates the app. Passwords
+  are salted and hashed with PBKDF2 (never stored in plain text), and every
+  workflow is scoped to its owner, so multiple people share one database
+  without seeing or overwriting each other's workflows.
+- **Multithreaded execution** - workflows run on a dedicated fixed thread pool
+  (`WorkflowExecutionService`) using named daemon threads, so the Swing UI
+  stays responsive and several workflows can run at the same time.
 - **n8n-style control flow** - IF/ELSE branching and counted/while loops, built
   on the **Composite pattern**: the flat step list is compiled into a tree of
   `FlowNode`s (`SequenceNode`, `IfNode`, `LoopNode`, `TaskNode`) that a
@@ -52,9 +59,10 @@ JUnit 5 test coverage.
 - **Rich custom exceptions** - a `WorkflowException` hierarchy (now including
   `JsonException`) so any layer's failure can be caught generically or handled
   specifically.
-- **162 JUnit 5 tests** covering the model, service and persistence layers,
-  including the JSON engine, control-flow compiler/interpreter and a live
-  in-process HTTP server test for the HTTP step.
+- **173 JUnit 5 tests** covering the model, service and persistence layers,
+  including the JSON engine, control-flow compiler/interpreter, a live
+  in-process HTTP server test, salted-hash authentication, per-user workflow
+  isolation and a timing-based concurrency test for the thread pool.
 - **Two front ends over one core** - a Swing GUI (default) and a text
   console (`--console`), proving the domain layer is UI-agnostic.
 
@@ -70,21 +78,24 @@ JUnit 5 test coverage.
 | Composite pattern | Control flow is a tree of `FlowNode`s compiled from the flat list by `FlowParser` |
 | Factory | `TaskFactory` builds concrete tasks from persisted fields |
 | Programming to interfaces | service layer depends on `WorkflowRepository`, not the concrete SQLite/file class |
+| Concurrency | `WorkflowExecutionService` runs workflows on a fixed `ExecutorService` thread pool; `CompletableFuture` streams results back to the EDT |
+| Security | `AuthService` salts + hashes passwords with PBKDF2 and compares them in constant time |
 
 ## Project layout
 
 ```
 src/main/java/com/flowforge
-├── Main.java                  Entry point (GUI by default, --console for text)
-├── exception/                 WorkflowException hierarchy (incl. JsonException)
-├── model/                     Workflow, ExecutionContext, RunReport, StepResult
+├── Main.java                  Entry point: login, then GUI (or --console)
+├── exception/                 WorkflowException hierarchy (incl. JsonException, AuthenticationException)
+├── model/                     Workflow, ExecutionContext, RunReport, StepResult, User
 │   ├── task/                  Task base + steps + Condition + TaskType + TaskFactory
 │   └── json/                  Dependency-free JSON parser, path resolver, writer
-├── service/                   WorkflowManager, WorkflowEngine, listener
+├── service/                   WorkflowManager, WorkflowEngine, AuthService,
+│   │                          WorkflowExecutionService (thread pool), listener
 │   └── flow/                  Composite control-flow tree + recursive interpreter
-├── persistence/               WorkflowRepository + SQLite and file implementations
+├── persistence/               WorkflowRepository + UserRepository + SQLite/file implementations
 ├── ui/                        ConsoleUI (text front end)
-└── gui/                       FlowTheme, FlowForgeApp, custom buttons/title bar/dialogs,
+└── gui/                       FlowTheme, FlowForgeApp, LoginDialog, custom buttons/dialogs,
                                Cyberpunk fonts + neon button painting
 
 lib/                           sqlite-jdbc driver
@@ -108,10 +119,10 @@ javac -cp "lib/*" -d out/main $(find src/main/java -name '*.java')
   while read f; do mkdir -p "../../../out/main/$(dirname "$f")"; \
   cp "$f" "../../../out/main/$f"; done)
 
-# Launch the GUI
+# Launch the GUI (opens the login/register screen first)
 java -cp "out/main:lib/*" com.flowforge.Main
 
-# Or the text console
+# Or the text console (prompts for login/register, then a text menu)
 java -cp "out/main:lib/*" com.flowforge.Main --console
 ```
 

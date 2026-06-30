@@ -2,8 +2,10 @@ package com.flowforge;
 
 import com.flowforge.gui.FlowForgeApp;
 import com.flowforge.gui.FlowTheme;
+import com.flowforge.model.User;
 import com.flowforge.persistence.SqliteWorkflowRepository;
 import com.flowforge.service.WorkflowEngine;
+import com.flowforge.service.WorkflowExecutionService;
 import com.flowforge.service.WorkflowManager;
 
 import javax.imageio.ImageIO;
@@ -24,7 +26,8 @@ public final class RenderShot {
         String outDir = args.length > 1 ? args[1] : "/tmp";
 
         WorkflowManager manager = new WorkflowManager(new SqliteWorkflowRepository(Path.of(dataDir)));
-        WorkflowEngine engine = new WorkflowEngine();
+        WorkflowExecutionService executionService = new WorkflowExecutionService(new WorkflowEngine());
+        User shotUser = new User("screenshot", java.time.Instant.now());
 
         for (FlowTheme theme : FlowTheme.values()) {
             SwingUtilities.invokeAndWait(() -> {
@@ -33,7 +36,7 @@ public final class RenderShot {
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
-                FlowForgeApp app = new FlowForgeApp(manager, engine);
+                FlowForgeApp app = new FlowForgeApp(manager, executionService, shotUser);
                 app.setSize(1040, 680);
                 app.selectFirstWorkflowForShot();
                 app.setVisible(true);
